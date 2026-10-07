@@ -1,6 +1,7 @@
 package com.evops;
 
 import com.evops.dto.AcceptRequest;
+import com.evops.dto.AnnotationDto;
 import com.evops.dto.BladeRequest;
 import com.evops.dto.DefectRegisterRequest;
 import com.evops.dto.InspectSubmitRequest;
@@ -17,6 +18,7 @@ import com.evops.enums.BladePosition;
 import com.evops.enums.BladeStatus;
 import com.evops.enums.DefectLevel;
 import com.evops.enums.DefectStatus;
+import com.evops.enums.DefectType;
 import com.evops.enums.OrderStatus;
 import com.evops.service.BladeService;
 import com.evops.service.InspectionService;
@@ -54,6 +56,18 @@ class BladeLedgerFlowTest {
         req.setBladePosition(pos);
         req.setMaterial("玻璃纤维增强复合材料");
         return req;
+    }
+
+    private AnnotationDto annotation(String imageUrl, Double x, Double y,
+                                     Double lengthMm, Double widthMm) {
+        AnnotationDto a = new AnnotationDto();
+        a.setImageUrl(imageUrl);
+        a.setPositionX(x);
+        a.setPositionY(y);
+        a.setLengthMm(lengthMm);
+        a.setWidthMm(widthMm);
+        a.setScreenshotUrl(imageUrl + ".crop.png");
+        return a;
     }
 
     private Turbine createTurbine(String no) {
@@ -130,8 +144,12 @@ class BladeLedgerFlowTest {
         // 缺陷登记
         DefectRegisterRequest defectReq = new DefectRegisterRequest();
         defectReq.setBladeId(bladeA.getId());
+        defectReq.setDefectType(DefectType.CRACK);
         defectReq.setDefectLevel(DefectLevel.SERIOUS);
+        defectReq.setInspector("巡检员-张工");
         defectReq.setDescription("叶尖前缘腐蚀，长度约 35cm");
+        defectReq.setAnnotations(Arrays.asList(annotation(
+                "oss://evops/drone/F10/20260301/a1.jpg", 320.0, 180.0, 350.0, 12.0)));
         Defect defect = inspectionService.registerDefect(order.getId(), defectReq);
         assertEquals(DefectStatus.OPEN, defect.getStatus());
         assertEquals(OrderStatus.DEFECT_REGISTERED,
@@ -222,7 +240,11 @@ class BladeLedgerFlowTest {
 
         DefectRegisterRequest defectReq = new DefectRegisterRequest();
         defectReq.setBladeId(bladeA.getId());
+        defectReq.setDefectType(DefectType.COATING);
         defectReq.setDefectLevel(DefectLevel.MINOR);
+        defectReq.setInspector("巡检员-李工");
+        defectReq.setAnnotations(Arrays.asList(annotation(
+                "oss://evops/drone/F30/a.jpg", 10.0, 20.0, 5.0, 3.0)));
         assertThrows(IllegalArgumentException.class,
                 () -> inspectionService.registerDefect(order.getId(), defectReq));
 

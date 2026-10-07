@@ -112,3 +112,48 @@ GET    /api/audit-events                      追溯查询（entityType + entity
 
 - `FlightRouteFlowTest`：航线配置与发布、禁飞区冲突坐标与原因、风速/电量校验、禁飞区生效窗口、新版本只作用未起飞任务、历史影像引用原航线。
 - `RouteChangeApprovalTest`：两级审批半批停留待处理、版本差异留存、任一级驳回结案、终审遇禁飞区被拦后停留待处理并可重试、航线与禁飞区审计追溯、历史版本退役后航点可查。
+
+## F3 叶片缺陷分级管理与影像标注反查
+
+在 F1/F2 基础上新增缺陷分级闭环（schema 版本 `f3-1`）：裂纹、雷击、结冰、涂层剥落按类型+等级配置处置时限；巡检员在影像上标注位置、尺寸与截图；专家复核可升级/降级但不覆盖初判；已关闭缺陷只能追加说明；风险等级变化重新生成维修建议并记录责任人；影像标注可反查原单、处理人与异常原因。
+
+### 数据表
+
+| 表 | 说明 |
+| --- | --- |
+| `t_defect_handling_rule` | 处置时限规则：类型+等级唯一，配置时限（小时）、默认责任人、维修建议模板；内置 4×4=16 条默认规则，可经接口覆盖 |
+| `t_defect` | 扩列：`defect_type`、初判 `initial_level` 与当前 `defect_level` 分离、巡检员、`rule_id`、`deadline`、维修建议、责任人、复核专家/意见、`anomaly_reason` 异常原因、`closed_at` |
+| `t_defect_annotation` | 影像标注：影像地址、坐标 (x,y)、尺寸（长/宽 mm）、截图、标注巡检员；一缺陷可多条 |
+| `t_defect_level_change` | 风险等级变化留痕：升/降级前后等级、时限、建议、责任人、复核专家、异常原因 |
+| `t_defect_note` | 缺陷追加说明：关闭后唯一允许的写入 |
+
+### 业务规则
+
+- **按等级配置处置时限**：登记时按 缺陷类型+初判等级 命中规则，`deadline = 登记时刻 + deadlineHours`，同时生成首版维修建议与默认责任人。规则调整只影响**之后**登记/复核的缺陷，已生成的处置时限不回改（默认种子仅在缺失时插入，运行期配置重启保留）。
+- **影像标注**：登记缺陷至少携带一条标注（影像地址、位置坐标、长/宽尺寸、截图），标注与缺陷、原单绑定，是反查入口。
+- **专家复核不覆盖初判**：`initial_level` 永久保留为巡检员初判，复核只改当前 `defect_level`。升级/降级在 `t_defect_level_change` 留痕（前后等级、时限、建议、责任人）；维持初判不留变化记录。初判与复核不一致时记录 `anomaly_reason`。
+- **风险变化重生成建议**：等级一旦变化，按新等级规则以登记时刻为锚点重算处置时限，重新生成维修建议并重定责任人，全部记录到变化留痕。
+- **关闭保护**：验收通过写入 `closed_at`；关闭后拒绝复核与维修，只能 `POST /api/defects/{id}/notes` 追加说明。
+- **影像反查**：按影像地址或标注 id 反查，返回原巡检单号、风机、巡检时刻、缺陷分类（初判/当前等级）、初判巡检员、复核专家、当前责任人、异常原因及标注位置/尺寸/截图。
+
+### 接口一览
+
+```
+GET    /api/handling-rules?defectType=         处置时限规则列表（可按类型过滤）
+POST   /api/handling-rules                     新增/覆盖 类型+等级 的时限配置
+POST   /api/inspection-orders/{id}/defects     缺陷登记（类型+初判等级+巡检员+影像标注，命中时限）
+POST   /api/defects/{id}/review                专家复核（升级/降级/维持，不覆盖初判）
+POST   /api/defects/{id}/notes                 追加说明（关闭后唯一写入）
+GET    /api/defects/{id}                       缺陷详情（含标注/等级变化/说明）
+GET    /api/defects/{id}/annotations           影像标注列表
+GET    /api/defects/{id}/level-changes         风险等级变化留痕
+GET    /api/defect-traces/by-image?imageUrl=   按影像地址反查原单/处理人/异常原因
+GET    /api/defect-traces/annotations/{id}     按标注 id 精确反查
+```
+
+> F1 的 `/api/defects/{id}/repair`、`/accept` 沿用；登记入参升级为必带 `defectType`、`inspector` 与 `annotations`。
+
+### 验证
+
+- `DefectLifecycleFlowTest`：16 条默认规则齐全、规则调整只影响之后登记、登记命中时限并生成建议/责任人/标注、升级与降级不覆盖初判且重算时限/建议/责任人并留痕、维持初判不留变化、关闭后只能追加说明、影像反查原单/处理人/异常原因、一影像多标注、缺规则登记被拦。
+- 既有 `BladeLedgerFlowTest` 登记入参同步升级，F1 全流程、F2 航线与改线测试继续通过。

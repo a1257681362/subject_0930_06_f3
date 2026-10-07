@@ -30,13 +30,16 @@ public class InspectionService extends ServiceImpl<InspectionOrderMapper, Inspec
     private final BladeService bladeService;
     private final DefectMapper defectMapper;
     private final FlightTaskService flightTaskService;
+    private final DefectLifecycleService defectLifecycleService;
 
     public InspectionService(TurbineService turbineService, BladeService bladeService,
-                             DefectMapper defectMapper, FlightTaskService flightTaskService) {
+                             DefectMapper defectMapper, FlightTaskService flightTaskService,
+                             DefectLifecycleService defectLifecycleService) {
         this.turbineService = turbineService;
         this.bladeService = bladeService;
         this.defectMapper = defectMapper;
         this.flightTaskService = flightTaskService;
+        this.defectLifecycleService = defectLifecycleService;
     }
 
     /** 创建巡检工单 */
@@ -92,30 +95,10 @@ public class InspectionService extends ServiceImpl<InspectionOrderMapper, Inspec
         return order;
     }
 
-    /** 缺陷登记：一个工单可登记多条缺陷 */
+    /** 缺陷登记：F3 起走分级生命周期（类型/初判等级 + 影像标注 + 处置时限） */
     @Transactional
     public Defect registerDefect(Long orderId, DefectRegisterRequest req) {
-        InspectionOrder order = mustGetOrder(orderId);
-        if (order.getStatus() != OrderStatus.INSPECTED
-                && order.getStatus() != OrderStatus.DEFECT_REGISTERED) {
-            throw new IllegalArgumentException("工单状态不允许登记缺陷: " + order.getStatus());
-        }
-        Blade blade = bladeService.mustGet(req.getBladeId());
-        if (!blade.getTurbineId().equals(order.getTurbineId())) {
-            throw new IllegalArgumentException("缺陷叶片不属于工单风机: " + req.getBladeId());
-        }
-
-        Defect defect = new Defect();
-        defect.setOrderId(orderId);
-        defect.setBladeId(req.getBladeId());
-        defect.setDefectLevel(req.getDefectLevel());
-        defect.setDescription(req.getDescription());
-        defect.setStatus(DefectStatus.OPEN);
-        defectMapper.insert(defect);
-
-        order.setStatus(OrderStatus.DEFECT_REGISTERED);
-        updateById(order);
-        return defect;
+        return defectLifecycleService.register(orderId, req);
     }
 
     /** 维修：回填维修结果 */
@@ -148,6 +131,8 @@ public class InspectionService extends ServiceImpl<InspectionOrderMapper, Inspec
         if (Boolean.TRUE.equals(req.getPass())) {
             defect.setStatus(DefectStatus.ACCEPTED);
             defect.setAcceptedAt(LocalDateTime.now());
+            // 关闭时刻：自此缺陷只能追加说明
+            defect.setClosedAt(defect.getAcceptedAt());
             defect.setAcceptRemark(req.getRemark());
             defectMapper.updateById(defect);
 

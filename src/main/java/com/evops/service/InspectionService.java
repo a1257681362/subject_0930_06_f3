@@ -9,11 +9,13 @@ import com.evops.dto.OrderCreateRequest;
 import com.evops.dto.RepairRequest;
 import com.evops.entity.Blade;
 import com.evops.entity.Defect;
+import com.evops.entity.DefectDisposeRule;
 import com.evops.entity.FlightTask;
 import com.evops.entity.InspectionOrder;
 import com.evops.enums.DefectStatus;
 import com.evops.enums.OrderStatus;
 import com.evops.enums.TaskStatus;
+import com.evops.mapper.DefectDisposeRuleMapper;
 import com.evops.mapper.DefectMapper;
 import com.evops.mapper.InspectionOrderMapper;
 import org.springframework.stereotype.Service;
@@ -29,13 +31,16 @@ public class InspectionService extends ServiceImpl<InspectionOrderMapper, Inspec
     private final TurbineService turbineService;
     private final BladeService bladeService;
     private final DefectMapper defectMapper;
+    private final DefectDisposeRuleMapper disposeRuleMapper;
     private final FlightTaskService flightTaskService;
 
     public InspectionService(TurbineService turbineService, BladeService bladeService,
-                             DefectMapper defectMapper, FlightTaskService flightTaskService) {
+                             DefectMapper defectMapper, DefectDisposeRuleMapper disposeRuleMapper,
+                             FlightTaskService flightTaskService) {
         this.turbineService = turbineService;
         this.bladeService = bladeService;
         this.defectMapper = defectMapper;
+        this.disposeRuleMapper = disposeRuleMapper;
         this.flightTaskService = flightTaskService;
     }
 
@@ -92,7 +97,7 @@ public class InspectionService extends ServiceImpl<InspectionOrderMapper, Inspec
         return order;
     }
 
-    /** 缺陷登记：一个工单可登记多条缺陷 */
+    /** 缺陷登记：一个工单可登记多条缺陷；按 类型+等级 配置生成处置时限与初始维修建议 */
     @Transactional
     public Defect registerDefect(Long orderId, DefectRegisterRequest req) {
         InspectionOrder order = mustGetOrder(orderId);
@@ -108,7 +113,13 @@ public class InspectionService extends ServiceImpl<InspectionOrderMapper, Inspec
         Defect defect = new Defect();
         defect.setOrderId(orderId);
         defect.setBladeId(req.getBladeId());
+        defect.setDefectType(req.getDefectType());
+        // 登记等级即初判等级，专家复核可调整当前等级但不覆盖初判
+        defect.setInitialLevel(req.getDefectLevel());
         defect.setDefectLevel(req.getDefectLevel());
+        DefectDisposeRule rule = mustGetDisposeRule(req);
+        defect.setRepairAdvice(rule.getAdviceTemplate());
+        defect.setDisposeDeadline(LocalDateTime.now().plusHours(rule.getDisposeHours()));
         defect.setDescription(req.getDescription());
         defect.setStatus(DefectStatus.OPEN);
         defectMapper.insert(defect);
@@ -116,6 +127,17 @@ public class InspectionService extends ServiceImpl<InspectionOrderMapper, Inspec
         order.setStatus(OrderStatus.DEFECT_REGISTERED);
         updateById(order);
         return defect;
+    }
+
+    private DefectDisposeRule mustGetDisposeRule(DefectRegisterRequest req) {
+        DefectDisposeRule rule = disposeRuleMapper.selectOne(new QueryWrapper<DefectDisposeRule>()
+                .eq("defect_type", req.getDefectType())
+                .eq("defect_level", req.getDefectLevel()));
+        if (rule == null) {
+            throw new IllegalArgumentException(
+                    "未配置处置时限: " + req.getDefectType() + "/" + req.getDefectLevel());
+        }
+        return rule;
     }
 
     /** 维修：回填维修结果 */

@@ -112,3 +112,43 @@ GET    /api/audit-events                      追溯查询（entityType + entity
 
 - `FlightRouteFlowTest`：航线配置与发布、禁飞区冲突坐标与原因、风速/电量校验、禁飞区生效窗口、新版本只作用未起飞任务、历史影像引用原航线。
 - `RouteChangeApprovalTest`：两级审批半批停留待处理、版本差异留存、任一级驳回结案、终审遇禁飞区被拦后停留待处理并可重试、航线与禁飞区审计追溯、历史版本退役后航点可查。
+
+## F3 叶片缺陷管理
+
+在 F1 缺陷登记基础上新增缺陷分类处置（schema 版本 `f3-1`）：裂纹、雷击、结冰、涂层剥落按等级配置处置时限；巡检员在影像上标注位置、尺寸与截图；专家复核可升级或降级但不覆盖初判；已关闭缺陷只能追加说明；影像标注可反查缺陷分类、原单、处理人与异常原因。
+
+### 数据表
+
+| 表 | 说明 |
+| --- | --- |
+| `t_defect` | 新增 `defect_type`、`initial_level`（初判，复核不覆盖）、`repair_advice`、`responsible_person`、`dispose_deadline` |
+| `t_defect_dispose_rule` | 处置时限配置：缺陷类型 × 等级唯一，处置时限（小时）+ 维修建议模板；预置 4×4 共 16 条 |
+| `t_defect_annotation` | 影像标注：位置、尺寸、截图；冗余 `order_id` 便于反查原单 |
+| `t_defect_review` | 专家复核记录：from_level → to_level、复核意见、责任人 |
+| `t_defect_note` | 追加说明：只增不改，已关闭缺陷唯一允许的写操作 |
+
+### 业务规则
+
+- **登记**：缺陷必须带分类（`CRACK/LIGHTNING/ICING/COATING_PEELING`）与初判等级；按 类型×等级 配置生成处置截止时间（登记时刻 + 时限）与初始维修建议；未配置的组合拒绝登记。
+- **影像标注**：巡检员标注位置、尺寸与截图；未指定影像地址时取工单登记的无人机影像；已关闭缺陷不允许标注。
+- **专家复核**：仅待维修（`OPEN`）缺陷可复核；复核等级必须与当前等级不同（构成升级或降级）；**初判等级 `initial_level` 永不覆盖**；等级变化后重新生成维修建议、按新时限从登记时刻重算处置截止时间，并记录责任人；每次复核留痕并写审计事件。
+- **已关闭（`ACCEPTED`）**：复核、标注、维修全部拒绝，唯一允许的写操作是追加说明。
+- **反查**：从影像标注定位缺陷分类（类型 + 初判/当前等级）、原单（工单号、风机）、处理人（标注人/最近复核人/责任人）与异常原因（缺陷描述 + 最近复核意见）。
+
+### 接口一览
+
+```
+GET    /api/defect-rules                    处置时限配置列表
+PUT    /api/defect-rules/{id}               调整处置时限与建议模板
+POST   /api/defects/{id}/annotations        影像标注（位置、尺寸、截图）
+POST   /api/defects/{id}/review             专家复核（升/降级，不覆盖初判）
+POST   /api/defects/{id}/notes              追加说明（已关闭唯一允许的写操作）
+GET    /api/defects/{id}                    缺陷详情（标注+复核记录+说明）
+GET    /api/annotations/{id}/trace          反查：分类/原单/处理人/异常原因
+```
+
+缺陷登记（`POST /api/inspection-orders/{id}/defects`）新增必填字段 `defectType`；`defectLevel` 作为初判等级登记。
+
+### 验证
+
+- `DefectManagementTest`：时限配置预置与调整、登记生成时限与建议、影像标注落库、复核升降级（初判不变/建议重生成/责任人记录/时限重算/同级拒绝）、已关闭只能追加说明、标注反查三要素、未配置组合拒绝登记。

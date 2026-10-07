@@ -17,6 +17,7 @@ import com.evops.enums.BladePosition;
 import com.evops.enums.BladeStatus;
 import com.evops.enums.DefectLevel;
 import com.evops.enums.DefectStatus;
+import com.evops.enums.DefectType;
 import com.evops.enums.OrderStatus;
 import com.evops.service.BladeService;
 import com.evops.service.InspectionService;
@@ -130,6 +131,7 @@ class BladeLedgerFlowTest {
         // 缺陷登记
         DefectRegisterRequest defectReq = new DefectRegisterRequest();
         defectReq.setBladeId(bladeA.getId());
+        defectReq.setDefectType(DefectType.COATING_PEELING);
         defectReq.setDefectLevel(DefectLevel.SERIOUS);
         defectReq.setDescription("叶尖前缘腐蚀，长度约 35cm");
         Defect defect = inspectionService.registerDefect(order.getId(), defectReq);
@@ -222,6 +224,7 @@ class BladeLedgerFlowTest {
 
         DefectRegisterRequest defectReq = new DefectRegisterRequest();
         defectReq.setBladeId(bladeA.getId());
+        defectReq.setDefectType(DefectType.CRACK);
         defectReq.setDefectLevel(DefectLevel.MINOR);
         assertThrows(IllegalArgumentException.class,
                 () -> inspectionService.registerDefect(order.getId(), defectReq));
